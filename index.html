@@ -198,6 +198,30 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   </section>
 
   <section class="card">
+
+<section class="card">
+  <h2>🔎 Автоматический поиск продуктов</h2>
+  <p class="note">
+    Введи название продукта или бренд.
+    Калории и БЖУ найдутся в базе продуктов.
+  </p>
+
+  <label>Что ты съела?</label>
+  <input
+    id="searchProduct"
+    placeholder="Например: кефир 2,5%"
+  >
+
+  <div class="actions">
+    <button onclick="searchNutrition()">
+      🔍 Найти продукт
+    </button>
+  </div>
+
+  <p id="searchStatus" class="note"></p>
+  <div id="searchResults"></div>
+</section>
+
     <h2>➕ Свой продукт</h2>
     <p class="note">Вводи КБЖУ с упаковки на 100 г продукта.</p>
     <label>Название</label>
@@ -495,6 +519,140 @@ async function importData(event) {
  }
  event.target.value="";
 }
+
+
+async function searchNutrition() {
+  const query = document.getElementById("searchProduct")
+    .value.trim();
+
+  const status = document.getElementById("searchStatus");
+  const results = document.getElementById("searchResults");
+
+  results.replaceChildren();
+
+  if (query.length < 2) {
+    status.textContent = "Введи название продукта.";
+    return;
+  }
+
+  status.textContent = "🔄 Ищу продукты...";
+
+  try {
+    const params = new URLSearchParams({
+      search_terms: query,
+      search_simple: "1",
+      action: "process",
+      json: "1",
+      page_size: "20",
+      fields: "code,product_name,brands,nutriments"
+    });
+
+    const response = await fetch(
+      "https://world.openfoodfacts.org/cgi/search.pl?" +
+      params.toString()
+    );
+
+    if (!response.ok) {
+      throw new Error("Ошибка запроса");
+    }
+
+    const data = await response.json();
+
+    const products = (data.products || [])
+      .map(product => {
+        const n = product.nutriments || {};
+
+        const p = Number(n.proteins_100g);
+        const f = Number(n.fat_100g);
+        const c = Number(n.carbohydrates_100g);
+
+        let cal = Number(n["energy-kcal_100g"]);
+
+        if (!Number.isFinite(cal)) {
+          const kj = Number(n["energy-kj_100g"]);
+          if (Number.isFinite(kj)) {
+            cal = kj / 4.184;
+          }
+        }
+
+        const valid = [
+          cal, p, f, c
+        ].every(x => Number.isFinite(x) && x >= 0);
+
+        if (!valid || !product.product_name) {
+          return null;
+        }
+
+        return {
+          name: product.product_name +
+            (product.brands ? " — " + product.brands : ""),
+          cal: Math.round(cal),
+          p: Math.round(p * 10) / 10,
+          f: Math.round(f * 10) / 10,
+          c: Math.round(c * 10) / 10
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 10);
+
+    if (!products.length) {
+      status.textContent =
+        "Продукт не найден. Попробуй другое название " +
+        "или добавь его вручную.";
+      return;
+    }
+
+    status.textContent =
+      "Выбери подходящий продукт. Данные указаны на 100 г.";
+
+    products.forEach(product => {
+      const card = document.createElement("div");
+      card.className = "entry";
+
+      const info = document.createElement("div");
+
+      const title = document.createElement("strong");
+      title.textContent = product.name;
+
+      const details = document.createElement("small");
+      details.textContent =
+        `${product.cal} ккал | ` +
+        `Б ${product.p} | ` +
+        `Ж ${product.f} | У ${product.c}`;
+
+      info.append(title, details);
+
+      const button = document.createElement("button");
+      button.textContent = "Выбрать";
+
+      button.onclick = () => {
+        custom.push(product);
+        save();
+        renderFoodList();
+
+        document.getElementById("food").value =
+          allFoods().length - 1;
+
+        preview();
+
+        status.textContent =
+          "✅ Продукт добавлен! Укажи вес " +
+          "в разделе «Добавить продукт».";
+
+        results.replaceChildren();
+      };
+
+      card.append(info, button);
+      results.appendChild(card);
+    });
+
+  } catch (error) {
+    status.textContent =
+      "Не удалось связаться с базой продуктов. " +
+      "Проверь интернет или добавь продукт вручную.";
+  }
+}
+
 
 function initGoals() {
  document.getElementById("goalCal").value=goals.cal;
